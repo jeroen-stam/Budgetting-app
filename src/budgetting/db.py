@@ -11,7 +11,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return sqlite3.connect(db_path)
 
 
-def init_db(conn):
+def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,9 +21,7 @@ def init_db(conn):
             category TEXT DEFAULT 'Uncategorized'
         )
     """)
-    init_rules(conn)
 
-def init_rules(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS rules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,6 +29,7 @@ def init_rules(conn):
             category TEXT NOT NULL
         )
     """)
+
     conn.commit()
 
 
@@ -76,13 +75,13 @@ def add_rule(conn, keyword: str, category: str):
     )
     conn.commit()
 
-def apply_rules(conn):
+def apply_rules(conn: sqlite3.Connection) -> None:
     conn.execute("""
         UPDATE transactions
         SET category = (
             SELECT r.category
             FROM rules r
-            WHERE transactions.description LIKE '%' || r.keyword || '%'
+            WHERE lower(transactions.description) LIKE '%' || lower(r.keyword) || '%'
             LIMIT 1
         )
         WHERE category = 'Uncategorized'
