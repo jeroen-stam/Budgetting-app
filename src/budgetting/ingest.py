@@ -1,8 +1,10 @@
 from pathlib import Path
 import pandas as pd
 
+from .db import get_db_path, connect, init_db, save_transactions
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]  # <-- project root
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_CSV = PROJECT_ROOT / "data" / "raw" / "sample.csv"
 
 
@@ -13,7 +15,7 @@ def read_csv(path: Path) -> pd.DataFrame:
     required = {"date", "description", "amount"}
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(f"CSV mist kolommen: {missing}. Gevonden: {list(df.columns)}")
+        raise ValueError(f"CSV mist kolommen: {missing}")
 
     df["amount"] = (
         df["amount"]
@@ -22,17 +24,25 @@ def read_csv(path: Path) -> pd.DataFrame:
         .astype(float)
     )
 
-    df["date"] = df["date"].astype(str)
-    df["description"] = df["description"].astype(str)
-
     return df[["date", "description", "amount"]]
 
 
 def main():
     print(f"Reading: {RAW_CSV}")
+
     df = read_csv(RAW_CSV)
+
     print("Columns:", list(df.columns))
-    print(df.head(10))
+    print(df.head())
+
+    db_path = get_db_path(PROJECT_ROOT)
+    conn = connect(db_path)
+    init_db(conn)
+
+    inserted = save_transactions(conn, df)
+    conn.close()
+
+    print(f"Saved {inserted} rows to {db_path}")
 
 
 if __name__ == "__main__":
