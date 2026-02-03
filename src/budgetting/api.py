@@ -1,24 +1,20 @@
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
+from fastapi.responses import HTMLResponse
+
 from .db import (
     get_db_path,
     connect,
     init_db,
     fetch_transactions,
     fetch_uncategorized,
-    add_rule,
-    apply_rules,
-    add_rule,
-    apply_rules,
     fetch_categories,
+    add_user_rule,
+    apply_rules,
     update_transaction_category,
 )
 
-from fastapi.responses import HTMLResponse
-from fastapi import Body
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
 app = FastAPI(title="Budgetting API")
 
 
@@ -29,35 +25,58 @@ def get_conn():
 
 
 @app.get("/transactions")
-def transactions(limit: int = 50):
+def transactions(profile_id: int = 1, limit: int = 50):
     conn = get_conn()
-    rows = fetch_transactions(conn, limit)
+    rows = fetch_transactions(conn, profile_id=profile_id, limit=limit)
     conn.close()
     return rows
 
 
 @app.get("/transactions/uncategorized")
-def uncategorized(limit: int = 50):
+def uncategorized(profile_id: int = 1, limit: int = 50):
     conn = get_conn()
-    rows = fetch_uncategorized(conn, limit)
+    rows = fetch_uncategorized(conn, profile_id=profile_id, limit=limit)
     conn.close()
     return rows
 
 
-@app.post("/rules")
-def create_rule(keyword: str, category: str):
+@app.get("/categories")
+def categories(profile_id: int = 1):
     conn = get_conn()
-    add_rule(conn, keyword, category)
+    cats = fetch_categories(conn, profile_id=profile_id)
     conn.close()
-    return {"status": "rule added", "keyword": keyword, "category": category}
+    return cats
+
+
+@app.post("/rules")
+def create_rule(profile_id: int = 1, keyword: str = "", category: str = ""):
+    if not keyword or not category:
+        return {"error": "keyword and category are required"}
+
+    conn = get_conn()
+    add_user_rule(conn, profile_id=profile_id, keyword=keyword, category=category)
+    conn.close()
+    return {"status": "rule added", "profile_id": profile_id, "keyword": keyword, "category": category}
 
 
 @app.post("/apply-rules")
-def run_rules():
+def run_rules(profile_id: int = 1):
     conn = get_conn()
-    apply_rules(conn)
+    apply_rules(conn, profile_id=profile_id)
     conn.close()
-    return {"status": "rules applied"}
+    return {"status": "rules applied", "profile_id": profile_id}
+
+
+@app.post("/transaction/{transaction_id}/set-category")
+def set_category(transaction_id: int, payload: dict = Body(...)):
+    category = payload.get("category")
+    if not category:
+        return {"error": "category is required"}
+
+    conn = get_conn()
+    update_transaction_category(conn, transaction_id, category)
+    conn.close()
+    return {"status": "ok", "transaction_id": transaction_id, "category": category}
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -105,8 +124,8 @@ async function fetchJSON(url, opts) {
 async function loadAll() {
   document.getElementById("status").textContent = "Loading...";
   const [tx, cats] = await Promise.all([
-    fetchJSON("/transactions/uncategorized?limit=200"),
-    fetchJSON("/categories")
+    fetchJSON("/transactions/uncategorized?profile_id=1&limit=200"),
+    fetchJSON("/categories?profile_id=1")
   ]);
 
   const list = document.getElementById("list");
@@ -121,7 +140,7 @@ async function loadAll() {
   tx.forEach(t => {
     // jouw API geeft rows terug als list/tuple; FastAPI serializeert dit als array:
     // [id, date, description, amount, category]
-    const [id, date, description, amount, category] = t;
+    const [id, profile_id, date, description, amount, category] = t;
 
     const row = document.createElement("div");
     row.className = "row";
@@ -167,7 +186,7 @@ async function save(id) {
   // 2) als keyword ingevuld is: maak rule aan (keyword -> category)
   if (keyword.length > 0) {
     const params = new URLSearchParams({keyword, category});
-    await fetchJSON(`/rules?` + params.toString(), { method: "POST" });
+    await fetchJSON(`/rules?profile_id=1&` + params.toString(), { method: "POST" });
   }
 
   // 3) refresh list
@@ -175,7 +194,7 @@ async function save(id) {
 }
 
 async function applyRules() {
-  await fetchJSON("/apply-rules", { method: "POST" });
+  await fetchJSON("/apply-rules?profile_id=1", { method: "POST" });
   await loadAll();
 }
 
