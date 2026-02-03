@@ -87,3 +87,63 @@ def apply_rules(conn: sqlite3.Connection) -> None:
         WHERE category = 'Uncategorized'
     """)
     conn.commit()
+
+def fetch_categories(conn: sqlite3.Connection):
+    # Categories die al bestaan in rules + default 'Uncategorized'
+    cur = conn.execute("""
+        SELECT DISTINCT category
+        FROM rules
+        ORDER BY category ASC
+    """)
+    cats = [r[0] for r in cur.fetchall()]
+    if "Uncategorized" not in cats:
+        cats.insert(0, "Uncategorized")
+    return cats
+
+
+def update_transaction_category(conn: sqlite3.Connection, transaction_id: int, category: str) -> None:
+    conn.execute(
+        "UPDATE transactions SET category = ? WHERE id = ?",
+        (category, transaction_id),
+    )
+    conn.commit()
+
+
+def fetch_transaction(conn: sqlite3.Connection, transaction_id: int):
+    cur = conn.execute(
+        """
+        SELECT id, date, description, amount, category
+        FROM transactions
+        WHERE id = ?
+        """,
+        (transaction_id,),
+    )
+    return cur.fetchone()
+
+def add_rule_if_not_exists(conn, keyword: str, category: str):
+    cur = conn.execute(
+        "SELECT 1 FROM rules WHERE lower(keyword) = lower(?)",
+        (keyword,),
+    )
+    exists = cur.fetchone()
+
+    if not exists:
+        conn.execute(
+            "INSERT INTO rules (keyword, category) VALUES (?, ?)",
+            (keyword, category),
+        )
+        conn.commit()
+
+def add_rule_if_not_exists(conn, keyword: str, category: str):
+    cur = conn.execute(
+        "SELECT 1 FROM rules WHERE lower(keyword) = lower(?)",
+        (keyword,),
+    )
+    exists = cur.fetchone()
+
+    if not exists:
+        conn.execute(
+            "INSERT INTO rules (keyword, category) VALUES (?, ?)",
+            (keyword, category),
+        )
+        conn.commit()

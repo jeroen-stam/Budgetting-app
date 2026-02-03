@@ -1,0 +1,213 @@
+from pathlib import Path
+from fastapi import FastAPI
+from .db import (
+    get_db_path,
+    connect,
+    init_db,
+    fetch_transactions,
+    fetch_uncategorized,
+    add_rule,
+    apply_rules,
+    add_rule,
+    apply_rules,
+    fetch_categories,
+    update_transaction_category,
+)
+
+from fastapi.responses import HTMLResponse
+from fastapi import Body
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+app = FastAPI(title="Budgetting API")
+
+
+def get_conn():
+    conn = connect(get_db_path(PROJECT_ROOT))
+    init_db(conn)
+    return conn
+
+
+@app.get("/transactions")
+def transactions(limit: int = 50):
+    conn = get_conn()
+    rows = fetch_transactions(conn, limit)
+    conn.close()
+    return rows
+
+
+@app.get("/transactions/uncategorized")
+def uncategorized(limit: int = 50):
+    conn = get_conn()
+    rows = fetch_uncategorized(conn, limit)
+    conn.close()
+    return rows
+
+
+@app.post("/rules")
+def create_rule(keyword: str, category: str):
+    conn = get_conn()
+    add_rule(conn, keyword, category)
+    conn.close()
+    return {"status": "rule added", "keyword": keyword, "category": category}
+
+
+@app.post("/apply-rules")
+def run_rules():
+    conn = get_conn()
+    apply_rules(conn)
+    conn.close()
+    return {"status": "rules applied"}
+
+@app.get("/", response_class=HTMLResponse)
+def home():
+    # Simpele single-file UI (geen templates nodig voor MVP)
+    return """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Budget Inbox</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; max-width: 900px; }
+    h1 { margin-bottom: 8px; }
+    .row { display: grid; grid-template-columns: 90px 1fr 120px 220px 120px; gap: 10px;
+           align-items: center; padding: 10px; border: 1px solid #ddd; border-radius: 10px; margin: 10px 0; }
+    .muted { color: #666; font-size: 12px; }
+    .desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    input, select, button { padding: 8px; }
+    button { cursor: pointer; }
+    .top { display:flex; gap: 12px; align-items:center; margin-bottom: 18px; }
+  </style>
+</head>
+<body>
+  <h1>Uncategorized Inbox</h1>
+  <div class="muted">Kies categorie per transactie. Optioneel: vul keyword in om meteen een rule aan te maken.</div>
+
+  <div class="top">
+    <button onclick="loadAll()">Refresh</button>
+    <button onclick="applyRules()">Apply rules</button>
+    <div class="muted" id="status"></div>
+  </div>
+
+  <div id="list"></div>
+
+<script>
+async function fetchJSON(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || res.statusText);
+  }
+  return await res.json();
+}
+
+async function loadAll() {
+  document.getElementById("status").textContent = "Loading...";
+  const [tx, cats] = await Promise.all([
+    fetchJSON("/transactions/uncategorized?limit=200"),
+    fetchJSON("/categories")
+  ]);
+
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+
+  if (tx.length === 0) {
+    list.innerHTML = "<p>✅ Inbox is leeg.</p>";
+    document.getElementById("status").textContent = "";
+    return;
+  }
+
+  tx.forEach(t => {
+    // jouw API geeft rows terug als list/tuple; FastAPI serializeert dit als array:
+    // [id, date, description, amount, category]
+    const [id, date, description, amount, category] = t;
+
+    const row = document.createElement("div");
+    row.className = "row";
+
+    row.innerHTML = `
+      <div class="muted">#${id}</div>
+      <div class="desc" title="${escapeHtml(description)}">${escapeHtml(description)}</div>
+      <div style="text-align:right">${Number(amount).toFixed(2)}</div>
+
+      <div>
+        <select id="cat-${id}">
+          ${cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}
+        </select>
+        <div class="muted">keyword (optional):</div>
+        <input id="kw-${id}" placeholder="bijv: odido" />
+      </div>
+
+      <div>
+        <button onclick="save(${id})">Save</button>
+      </div>
+    `;
+
+    list.appendChild(row);
+    // default select: als er al een category is, zet hem daarop
+    const sel = document.getElementById(`cat-${id}`);
+    sel.value = category || "Uncategorized";
+  });
+
+  document.getElementById("status").textContent = `Loaded ${tx.length} items`;
+}
+
+async function save(id) {
+  const category = document.getElementById(`cat-${id}`).value;
+  const keyword = document.getElementById(`kw-${id}`).value.trim();
+
+  // 1) zet category direct op die transactie
+  await fetchJSON(`/transaction/${id}/set-category`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({category})
+  });
+
+  // 2) als keyword ingevuld is: maak rule aan (keyword -> category)
+  if (keyword.length > 0) {
+    const params = new URLSearchParams({keyword, category});
+    await fetchJSON(`/rules?` + params.toString(), { method: "POST" });
+  }
+
+  // 3) refresh list
+  await loadAll();
+}
+
+async function applyRules() {
+  await fetchJSON("/apply-rules", { method: "POST" });
+  await loadAll();
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+loadAll();
+</script>
+</body>
+</html>
+"""
+
+@app.get("/categories")
+def categories():
+    conn = get_conn()
+    cats = fetch_categories(conn)
+    conn.close()
+    return cats
+
+@app.post("/transaction/{transaction_id}/set-category")
+def set_category(transaction_id: int, payload: dict = Body(...)):
+    category = payload.get("category")
+    if not category:
+        return {"error": "category is required"}
+
+    conn = get_conn()
+    update_transaction_category(conn, transaction_id, category)
+    conn.close()
+    return {"status": "ok", "transaction_id": transaction_id, "category": category}
